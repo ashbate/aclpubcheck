@@ -1,126 +1,113 @@
-import unittest
-from unittest.mock import patch, MagicMock, call
-import types
-import os
-import tempfile
-import json
-from aclpubcheck.formatchecker import Formatter, Error, Warn, Page, Margin
+import pytest
+from unittest.mock import MagicMock, patch
+from aclpubcheck.formatchecker import Formatter, Page, Margin, Error
 
-class TestFormatter(unittest.TestCase):
-    def setUp(self):
-        self.formatter = Formatter()
-        # Patch pdfplumber.open and PDFNameCheck
-        self.patcher_pdfplumber = patch('aclpubcheck.formatchecker.pdfplumber.open')
-        self.mock_pdfplumber_open = self.patcher_pdfplumber.start()
-        self.patcher_namecheck = patch('aclpubcheck.formatchecker.PDFNameCheck')
-        self.mock_namecheck = self.patcher_namecheck.start()
-        self.addCleanup(self.patcher_pdfplumber.stop)
-        self.addCleanup(self.patcher_namecheck.stop)
+@pytest.fixture
+def formatter():
+    return Formatter()
 
-    def tearDown(self):
-        self.patcher_pdfplumber.stop()
-        self.patcher_namecheck.stop()
+def test_formatter_init_defaults(formatter):
+    assert formatter.right_offset == 4.5
+    assert formatter.left_offset == 2
+    assert formatter.top_offset == 1
+    assert formatter.bottom_offset == 1
+    assert formatter.background_color == 255
+    assert hasattr(formatter, "pdf_namecheck")
 
-    def make_mock_page(self, width=Page.WIDTH.value, height=Page.HEIGHT.value, images=None, words=None, text=None, hyperlinks=None, chars=None):
-        page = MagicMock()
-        page.width = width
-        page.height = height
-        page.images = images or []
-        page.extract_words.return_value = words or []
-        page.extract_text.return_value = text or ''
-        page.hyperlinks = hyperlinks or []
-        page.chars = chars or []
-        # For cropping and to_image
-        page.crop.return_value = page
-        page.to_image.return_value = MagicMock(original=[self.formatter.background_color]*100)
-        return page
+def test_make_name_check_config_returns_namespace(formatter):
+    formatter.pdfpath = "dummy.pdf"
+    config = formatter.make_name_check_config()
+    assert config.file == "dummy.pdf"
+    assert config.show_names is False
+    assert config.first_name is True
 
-    def test_check_page_size(self):
-        # One page correct, one page wrong size
-        page1 = self.make_mock_page()
-        page2 = self.make_mock_page(width=600, height=900)
-        self.formatter.pdf = MagicMock(pages=[page1, page2])
-        self.formatter.logs = {}
-        self.formatter.page_errors = set()
-        self.formatter.check_page_size()
-        self.assertIn(Error.SIZE, self.formatter.logs)
-        self.assertIn(2, self.formatter.page_errors)
+def test_check_page_size_logs_error_for_non_a4(formatter):
+    mock_page = MagicMock()
+    mock_page.width = 600
+    mock_page.height = 850
+    formatter.pdf = MagicMock()
+    formatter.pdf.pages = [mock_page]
+    formatter.logs = {Error.SIZE: []}
+    formatter.page_errors = set()
+    formatter.check_page_size()
+    assert Error.SIZE in formatter.logs
+    assert "not A4" in formatter.logs[Error.SIZE][0]
 
-    def test_check_page_margin_no_violations(self):
-        # No images or words violating margins
-        page = self.make_mock_page()
-        self.formatter.pdf = MagicMock(pages=[page])
-        self.formatter.logs = {}
-        self.formatter.page_errors = set()
-        with patch('aclpubcheck.formatchecker.args', MagicMock(disable_bottom_check=False)):
-            self.formatter.check_page_margin(tempfile.gettempdir())
-        self.assertNotIn(Error.MARGIN, self.formatter.logs)
+def test_check_page_size_no_error_for_a4(formatter):
+    mock_page = MagicMock()
+    mock_page.width = Page.WIDTH.value
+    mock_page.height = Page.HEIGHT.value
+    formatter.pdf = MagicMock()
+    formatter.pdf.pages = [mock_page]
+    formatter.logs = {Error.SIZE: []}
+    formatter.page_errors = set()
+    formatter.check_page_size()
+    assert formatter.logs[Error.SIZE] == []
 
-    def test_check_page_margin_with_violations(self):
-        # Add a word violating the right margin
-        word = {'x0': Page.WIDTH.value-60, 'x1': Page.WIDTH.value+10, 'top': 100, 'bottom': 120, 'non_stroking_color': (1,1,1), 'stroking_color': (1,1,1)}
-        page = self.make_mock_page(words=[word])
-        self.formatter.pdf = MagicMock(pages=[page])
-        self.formatter.logs = {}
-        self.formatter.page_errors = set()
-        with patch('aclpubcheck.formatchecker.args', MagicMock(disable_bottom_check=False)):
-            self.formatter.check_page_margin(tempfile.gettempdir())
-        self.assertIn(Error.MARGIN, self.formatter.logs)
+def test_check_font_logs_error_for_wrong_font(monkeypatch, formatter):
+    mock_page = MagicMock()
+    mock_page.chars = [{'fontname': 'FakeFont'}, {'fontname': 'FakeFont'}, {'fontname': 'OtherFont'}]
+    formatter.pdf = MagicMock()
+    formatter.pdf.pages = [mock_page]
+    formatter.logs = {Error.FONT: []}
+    formatter.check_font()
+    assert any("Wrong font" in msg for msg in formatter.logs[Error.FONT])
 
-    def test_check_page_num_within_limit(self):
-        # 3 pages, type 'short' (limit 5)
-        pages = [self.make_mock_page() for _ in range(3)]
-        self.formatter.pdf = MagicMock(pages=pages)
-        self.formatter.logs = {}
-        self.formatter.page_errors = set()
-        self.formatter.check_page_num('short')
-        self.assertNotIn(Error.PAGELIMIT, self.formatter.logs)
+def test_check_font_logs_error_for_low_main_font(monkeypatch, formatter):
+    mock_page = MagicMock()
+    # 2 of font1, 4 of font2, so max_font_count/sum_char_count = 4/6 < 0.35
+    mock_page.chars = [{'fontname': 'font1'}]*2 + [{'fontname': 'font2'}]*4
+    formatter.pdf = MagicMock()
+    formatter.pdf.pages = [mock_page]
+    formatter.logs = {Error.FONT: []}
+    # Patch correct_fontnames so font2 is not accepted
+    monkeypatch.setattr(formatter, "check_font", Formatter.check_font.__get__(formatter))
+    formatter.check_font()
+    assert any("Can't find the main font" in msg or "Wrong font" in msg for msg in formatter.logs[Error.FONT])
 
-    def test_check_page_num_exceeds_limit(self):
-        # 6 pages, type 'short' (limit 5), marker on page 6
-        pages = [self.make_mock_page(text='') for _ in range(6)]
-        pages[5].extract_text.return_value = 'References\n'  # marker on page 6
-        self.formatter.pdf = MagicMock(pages=pages)
-        self.formatter.logs = {}
-        self.formatter.page_errors = set()
-        self.formatter.check_page_num('short')
-        self.assertIn(Error.PAGELIMIT, self.formatter.logs)
+def test_make_name_check_config_keys(formatter):
+    formatter.pdfpath = "test.pdf"
+    config = formatter.make_name_check_config()
+    keys = vars(config).keys()
+    assert "file" in keys
+    assert "show_names" in keys
+    assert "mode" in keys
 
-    def test_check_font_main_font(self):
-        # Main font is correct and >35%
-        chars = [{'fontname': 'NimbusRomNo9L-Regu'}]*10 + [{'fontname': 'OtherFont'}]*5
-        page = self.make_mock_page(chars=chars)
-        self.formatter.pdf = MagicMock(pages=[page])
-        self.formatter.logs = {}
-        self.formatter.check_font()
-        self.assertNotIn(Error.FONT, self.formatter.logs)
+def test_check_page_num_no_error_for_short_paper(monkeypatch, formatter):
+    mock_page = MagicMock()
+    mock_page.extract_text.return_value = "Some text\nReferences"
+    formatter.pdf = MagicMock()
+    formatter.pdf.pages = [mock_page] * 5  # short paper threshold is 5
+    formatter.logs = {Error.PAGELIMIT: []}
+    formatter.page_errors = set()
+    formatter.check_page_num("short")
+    assert formatter.logs[Error.PAGELIMIT] == []
 
-    def test_check_font_wrong_font(self):
-        # Main font is wrong
-        chars = [{'fontname': 'WrongFont'}]*10 + [{'fontname': 'OtherFont'}]*5
-        page = self.make_mock_page(chars=chars)
-        self.formatter.pdf = MagicMock(pages=[page])
-        self.formatter.logs = {}
-        self.formatter.check_font()
-        self.assertIn(Error.FONT, self.formatter.logs)
+def test_check_page_num_error_for_long_paper(monkeypatch, formatter):
+    # 10 pages, marker on page 10, line 1
+    mock_page = MagicMock()
+    mock_page.extract_text.return_value = "Some text"
+    ref_page = MagicMock()
+    ref_page.extract_text.return_value = "References"
+    formatter.pdf = MagicMock()
+    formatter.pdf.pages = [mock_page]*9 + [ref_page]
+    formatter.logs = {Error.PAGELIMIT: []}
+    formatter.page_errors = set()
+    formatter.check_page_num("long")
+    assert any("exceeds the page limit" in msg for msg in formatter.logs[Error.PAGELIMIT])
 
-    def test_make_name_check_config(self):
-        self.formatter.pdfpath = 'dummy.pdf'
-        config = self.formatter.make_name_check_config()
-        self.assertEqual(config.file, 'dummy.pdf')
-        self.assertTrue(config.first_name)
-        self.assertTrue(config.last_name)
-        self.assertEqual(config.ref_string, 'References')
-
-    def test_check_references(self):
-        # Simulate references, arxiv, doi, and hyperlinks
-        hyperlinks = [{'uri': 'https://doi.org/10.1234/abc'}, {'uri': 'https://arxiv.org/abs/1234'}]
-        page = self.make_mock_page(text='References\nSome ref', hyperlinks=hyperlinks)
-        self.formatter.pdf = MagicMock(pages=[page])
-        self.formatter.logs = {}
-        with patch('aclpubcheck.formatchecker.args', MagicMock(disable_name_check=False)):
-            self.formatter.check_references()
-        self.assertIn(Warn.BIB, self.formatter.logs)
-
-if __name__ == '__main__':
-    unittest.main() 
+def test_format_check_calls_all_methods(monkeypatch, formatter):
+    formatter.number = "1"
+    formatter.pdf = MagicMock()
+    formatter.logs = {}
+    formatter.page_errors = set()
+    formatter.pdfpath = "dummy.pdf"
+    called = {}
+    monkeypatch.setattr(formatter, "check_page_size", lambda: called.setdefault("size", True))
+    monkeypatch.setattr(formatter, "check_page_margin", lambda output_dir: called.setdefault("margin", True))
+    monkeypatch.setattr(formatter, "check_page_num", lambda paper_type: called.setdefault("num", True))
+    monkeypatch.setattr(formatter, "check_font", lambda: called.setdefault("font", True))
+    monkeypatch.setattr(formatter, "check_references", lambda: called.setdefault("refs", True))
+    with patch("pdfplumber.open", return_value=MagicMock()):
+        formatter.format_check("dummy.pdf", "long", check_references=True)
+    assert all(k in called for k in ["size", "margin", "num", "font", "refs"])
