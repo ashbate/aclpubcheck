@@ -3,7 +3,7 @@
 name: Python application
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "cursor-tests", "cursor-tests-pr" ]
   pull_request:
     branches: [ "main" ]
 permissions:
