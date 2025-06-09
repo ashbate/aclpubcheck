@@ -3,9 +3,9 @@
 name: Python application
 on:
   push:
-    branches: [ "main", "cursor-tests", "cursor-tests-pr" ]
+    branches: [ "main", "Cursor_tests", "cursor-tests-pr" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main", "Cursor_tests", "cursor-tests-pr" ]
 permissions:
   contents: read
 jobs:
