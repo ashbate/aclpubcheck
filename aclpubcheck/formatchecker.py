@@ -63,7 +63,7 @@ class Formatter(object):
         self.background_color = 255
         self.pdf_namecheck = PDFNameCheck()
 
-
+    #@sartor-bot
     def format_check(self, submission, paper_type, output_dir = ".", print_only_errors = False, check_references = False):
         """
         Return True if the paper is correct, False otherwise.
