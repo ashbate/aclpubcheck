@@ -31,7 +31,7 @@ class Error(Enum):
 class Warn(Enum):
     BIB = "Bibliography"
 
-
+#@sartor-bot
 class Page(Enum):
     # 595 pixels (72ppi) = 21cm
     WIDTH = 595
@@ -45,7 +45,7 @@ class Margin(Enum):
     RIGHT = "right"
     LEFT = "left"
 
-
+#@sartor-bot
 class Formatter(object):
 
     def __init__(self):
