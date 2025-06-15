@@ -18,7 +18,7 @@ import traceback
 
 from .name_check import PDFNameCheck
 
-
+#@sartor-bot
 class Error(Enum):
     SIZE = "Size"
     PARSING = "Parsing"
