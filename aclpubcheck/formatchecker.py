@@ -31,7 +31,7 @@ class Error(Enum):
 class Warn(Enum):
     BIB = "Bibliography"
 
-#@sartor-bot
+
 class Page(Enum):
     # 595 pixels (72ppi) = 21cm
     WIDTH = 595
