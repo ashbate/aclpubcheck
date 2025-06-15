@@ -483,6 +483,7 @@ class Formatter(object):
 
 
 args = None
+#@sartor-bot
 def worker(pdf_path, paper_type):
     """ process one pdf """
     return Formatter().format_check(submission=pdf_path, paper_type=paper_type)
