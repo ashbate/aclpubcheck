@@ -45,6 +45,8 @@ class Margin(Enum):
     RIGHT = "right"
     LEFT = "left"
 
+
+print(3)
 #@sartor-bot
 class Formatter(object):
 
